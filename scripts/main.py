@@ -11,14 +11,13 @@ import time
 import traceback
 from supabase import acreate_client, AsyncClient
 from make_orders import make_order
-from get_player_positions import fetch_player_positions, insert_player_positions_batch, get_current_exposures
+from get_player_positions import fetch_player_positions, insert_player_positions_batch
 from get_player_history_new import (
     fetch_activities as fetch_history_activities,
     insert_activities_batch as insert_history_batch,
 )
 from constraints.sizing import sizing_constraints
-from constraints.risk_manager import check_risk_constraints
-from copied_trades import claim_trade, mark_trade, trader_exposure
+from copied_trades import claim_trade, mark_trade
 from py_clob_client_v2.order_builder.constants import BUY, SELL
 from config import get_config
 from logger import logger
@@ -68,44 +67,56 @@ async def handle_new_trade(payload):
 
         if side == SELL:
             logger.info(f"⏭️  Side is SELL, calculating proportional size...")
+            trade_size_shares = float(record.get('size', 0))
             data_trader = fetch_player_positions(user_address=proxy_wallet, condition_id=condition_id)
             data_myself = fetch_player_positions(user_address=config.POLY_FUNDER, condition_id=condition_id)
 
-            if data_trader and data_myself:
-                size_trader = float(data_trader[0].get('size', 0))
-                size_myself = float(data_myself[0].get('size', 0))
+            if not data_myself:
+                logger.info(f"No bot position found for condition {condition_id}, nothing to sell")
+                return None
 
-                if size_trader > 0:
-                    percentage_position = usdc_size / size_trader
-                    final_size = percentage_position * size_myself
-                    logger.info(f"Selling {percentage_position*100:.2f}% of position: {final_size:.2f} units")
-                    if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
-                                       final_size * price, condition_id):
-                        return None
-                    resp = make_order(price=price, size=final_size, side=side, token_id=token_id)
-                    mark_trade(transaction_hash,
-                               "submitted" if resp and resp.get("success") else "failed",
-                               resp.get("orderID") if resp else None)
-                    return resp
-            return None
+            size_myself = float(data_myself[0].get('size', 0))
+            if size_myself <= 0:
+                logger.info(f"Bot position size is 0, nothing to sell")
+                return None
+
+            trader_remaining = float(data_trader[0].get('size', 0)) if data_trader else 0
+            pre_sell_size = trader_remaining + trade_size_shares
+
+            if pre_sell_size <= 0:
+                logger.warning(f"Cannot determine trader's pre-sell position, selling 100% as safety fallback")
+                final_size = size_myself
+                percentage_position = 1.0
+            elif trader_remaining <= 0:
+                logger.info(f"Trader fully exited position, selling 100% of bot position")
+                final_size = size_myself
+                percentage_position = 1.0
+            else:
+                percentage_position = trade_size_shares / pre_sell_size
+                final_size = percentage_position * size_myself
+
+            logger.info(f"Selling {percentage_position*100:.2f}% of position: {final_size:.2f} units")
+            if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
+                               final_size * price, condition_id):
+                return None
+            resp = make_order(price=price, size=final_size, side=side, token_id=token_id)
+            mark_trade(transaction_hash,
+                       "submitted" if resp and resp.get("success") else "failed",
+                       resp.get("orderID") if resp else None)
+            return resp
         else:
             bot_usdc_size = sizing_constraints(usdc_size)
-            if bot_usdc_size > 0:
-                total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-                t_exp = trader_exposure(proxy_wallet)
-                if check_risk_constraints(total_exp, bot_usdc_size,
-                                          market_exposure=market_exps.get(token_id, 0),
-                                          trader_exposure=t_exp):
-                    if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
-                                       bot_usdc_size, condition_id):
-                        return None
-                    bot_size_units = bot_usdc_size / price
-                    resp = make_order(price=price, size=bot_size_units, side=side, token_id=token_id)
-                    mark_trade(transaction_hash,
-                               "submitted" if resp and resp.get("success") else "failed",
-                               resp.get("orderID") if resp else None)
-                    return resp
-            return None
+            if not claim_trade(transaction_hash, proxy_wallet, token_id, side, price,
+                               bot_usdc_size, condition_id):
+                logger.warning(f"⛔ TRADE SKIPPED (duplicate): {title} | tx={transaction_hash}")
+                return None
+            bot_size_units = bot_usdc_size / price
+            logger.info(f"✅ PLACING ORDER: {title} | {side} {bot_size_units:.2f} units @ ${price} (${bot_usdc_size:.2f})")
+            resp = make_order(price=price, size=bot_size_units, side=side, token_id=token_id)
+            mark_trade(transaction_hash,
+                       "submitted" if resp and resp.get("success") else "failed",
+                       resp.get("orderID") if resp else None)
+            return resp
     except Exception as e:
         logger.error(f"❌ Error in handle_new_trade: {e}")
         return None
@@ -126,15 +137,9 @@ async def handle_new_position(payload):
         logger.info(f"📈 New position from target: {proxy_wallet[:10]}... | {title}")
 
         bot_usdc_value = sizing_constraints(initial_value)
-        if bot_usdc_value > 0:
-            total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-            t_exp = trader_exposure(proxy_wallet)
-            if check_risk_constraints(total_exp, bot_usdc_value,
-                                      market_exposure=market_exps.get(asset, 0),
-                                      trader_exposure=t_exp):
-                bot_size_units = bot_usdc_value / avg_price
-                return make_order(price=avg_price, size=bot_size_units, side=BUY, token_id=asset)
-        return None
+        bot_size_units = bot_usdc_value / avg_price
+        logger.info(f"✅ PLACING ORDER: {title} | BUY {bot_size_units:.2f} units @ ${avg_price} (${bot_usdc_value:.2f})")
+        return make_order(price=avg_price, size=bot_size_units, side=BUY, token_id=asset)
     except Exception as e:
         logger.error(f"❌ Error in handle_new_position: {e}")
         return None
@@ -161,24 +166,21 @@ async def handle_update_position(payload):
 
         if delta_value > 0:
             sized_delta = sizing_constraints(abs(delta_value))
-            if sized_delta <= 0:
-                return None
-            total_exp, market_exps = get_current_exposures(config.POLY_FUNDER)
-            t_exp = trader_exposure(proxy_wallet)
-            if check_risk_constraints(total_exp, sized_delta,
-                                      market_exposure=market_exps.get(asset, 0),
-                                      trader_exposure=t_exp):
-                bot_size_units = sized_delta / cur_price
-                return make_order(price=cur_price, size=bot_size_units, side=BUY, token_id=asset)
+            bot_size_units = sized_delta / cur_price
+            logger.info(f"✅ PLACING ORDER (update): {title} | BUY {bot_size_units:.2f} units @ ${cur_price} (${sized_delta:.2f})")
+            return make_order(price=cur_price, size=bot_size_units, side=BUY, token_id=asset)
         else:
             old_size_trader = float(old_record.get('size', 1))
             new_size_trader = float(new_record.get('size', 0))
             data_myself = fetch_player_positions(user_address=config.POLY_FUNDER, condition_id=new_record.get('condition_id'))
-            if data_myself:
-                my_current_size = float(data_myself[0].get('size', 0))
-                reduction_pct = (old_size_trader - new_size_trader) / old_size_trader
-                my_reduction_size = my_current_size * reduction_pct
-                return make_order(price=cur_price, size=my_reduction_size, side=SELL, token_id=asset)
+            if not data_myself:
+                logger.warning(f"⛔ UPDATE SELL SKIPPED (no bot position): {title}")
+                return None
+            my_current_size = float(data_myself[0].get('size', 0))
+            reduction_pct = (old_size_trader - new_size_trader) / old_size_trader
+            my_reduction_size = my_current_size * reduction_pct
+            logger.info(f"✅ PLACING ORDER (update): {title} | SELL {my_reduction_size:.2f} units @ ${cur_price} ({reduction_pct*100:.1f}% reduction)")
+            return make_order(price=cur_price, size=my_reduction_size, side=SELL, token_id=asset)
         return None
     except Exception as e:
         logger.error(f"❌ Error in handle_update_position: {e}")

@@ -8,8 +8,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
 # Create a mock config object
 mock_config_obj = MagicMock()
-mock_config_obj.STAKE_WHALE_PCT = 0.01
-mock_config_obj.STAKE_MIN = 5.0
+mock_config_obj.STAKE_WHALE_PCT = 0.30
+mock_config_obj.STAKE_MIN = 0.0
 mock_config_obj.STAKE_MAX = 50.0
 mock_config_obj.BANKROLL = 1000.0
 mock_config_obj.LOG_LEVEL = "INFO"
@@ -22,14 +22,14 @@ with patch('config.get_config', return_value=mock_config_obj):
 
 def test_sizing_constraints():
     with patch('constraints.sizing.config', mock_config_obj):
-        # 1% of 1000 = 10, within [5, 50]
-        assert sizing_constraints(1000) == 10.0
-        # 1% of 100 = 1, below STAKE_MIN (5) -> reject
-        assert sizing_constraints(100) == 0.0
-        # 1% of 10000 = 100, capped at STAKE_MAX (50)
-        assert sizing_constraints(10000) == 50.0
-        # 1% of 500 = 5, exactly at floor -> allowed
-        assert sizing_constraints(500) == 5.0
+        # 30% of 100 = 30, within max
+        assert sizing_constraints(100) == 30.0
+        # 30% of 200 = 60, capped at STAKE_MAX (50)
+        assert sizing_constraints(200) == 50.0
+        # 30% of 0.10 = 0.03, no minimum so it passes
+        assert sizing_constraints(0.10) == 0.03
+        # 30% of 10 = 3.0
+        assert sizing_constraints(10) == 3.0
 
 def test_risk_manager_total_exposure():
     with patch('constraints.risk_manager.config', mock_config_obj):

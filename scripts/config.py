@@ -62,9 +62,9 @@ class Config:
     def _load_sizing_config(self):
         """Load sizing configuration from environment or use defaults"""
         self.BANKROLL = float(os.getenv("BANKROLL", "1000"))
-        self.STAKE_MIN = float(os.getenv("STAKE_MIN", "5"))
-        self.STAKE_MAX = float(os.getenv("STAKE_MAX", "20"))
-        self.STAKE_WHALE_PCT = float(os.getenv("STAKE_WHALE_PCT", "0.005"))
+        self.STAKE_MIN = float(os.getenv("STAKE_MIN", "0"))
+        self.STAKE_MAX = float(os.getenv("STAKE_MAX", "50"))
+        self.STAKE_WHALE_PCT = float(os.getenv("STAKE_WHALE_PCT", "0.30"))
     
     def _validate_config(self):
         """Validate that all required configuration is present"""

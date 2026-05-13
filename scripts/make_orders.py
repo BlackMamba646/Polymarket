@@ -1,6 +1,6 @@
 import time
 from py_clob_client_v2.client import ClobClient
-from py_clob_client_v2.clob_types import OrderArgsV2 as OrderArgs, OrderType
+from py_clob_client_v2.clob_types import OrderArgsV2 as OrderArgs, MarketOrderArgsV2 as MarketOrderArgs, OrderType
 from py_clob_client_v2.order_builder.constants import BUY, SELL
 from config import get_config
 from logger import logger
@@ -42,17 +42,15 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
 
-    # Apply slippage to price
-    if side == BUY:
-        execution_price = price * (1 + max_slippage)
-    else:
-        execution_price = price * (1 - max_slippage)
-
-    # Ensure precision is handled (Polymarket prices are usually 2-4 decimal places, but we use the provided one)
-    execution_price = round(execution_price, 4)
     size = round(size, 2)
+    use_market_order = (side == SELL)
 
-    logger.info(f"Preparing {side} order: {size} units at price ${execution_price} (Original: ${price}, Slippage: {max_slippage*100}%) for Token ID: {token_id}")
+    if use_market_order:
+        logger.info(f"Preparing SELL market order (FOK): {size} shares for Token ID: {token_id}")
+    else:
+        execution_price = price * (1 + max_slippage)
+        execution_price = round(execution_price, 4)
+        logger.info(f"Preparing {side} limit order: {size} units at price ${execution_price} (Original: ${price}, Slippage: {max_slippage*100}%) for Token ID: {token_id}")
 
     if config.DRY_RUN:
         logger.info(f"🛡️ DRY RUN: Skipping order placement for {side} {size} units.")
@@ -62,22 +60,30 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     while attempts < config.MAX_RETRY_ATTEMPTS:
         try:
             client = _get_client()
-            
-            order_args = OrderArgs(
-                price=execution_price,
-                size=size,
-                side=side,
-                token_id=token_id,
-            )
-            
-            # Sign and post order
-            signed_order = client.create_order(order_args)
-            resp = client.post_order(signed_order, OrderType.GTC)
+
+            if use_market_order:
+                market_args = MarketOrderArgs(
+                    token_id=token_id,
+                    amount=size,
+                    side=side,
+                )
+                signed_order = client.create_market_order(market_args)
+                resp = client.post_order(signed_order, OrderType.FOK)
+            else:
+                order_args = OrderArgs(
+                    price=execution_price,
+                    size=size,
+                    side=side,
+                    token_id=token_id,
+                )
+                signed_order = client.create_order(order_args)
+                resp = client.post_order(signed_order, OrderType.GTC)
             
             if resp and resp.get("success"):
                 order_id = resp.get("orderID")
                 logger.info(f"✅ Order placed successfully! Order ID: {order_id}")
-                send_notification(f"✅ *Order Placed!*\n\nType: {side}\nSize: {size}\nPrice: ${execution_price}\nToken: `{token_id[:16]}...`")
+                notif_price = "market" if use_market_order else f"${execution_price}"
+                send_notification(f"✅ *Order Placed!*\n\nType: {side}\nSize: {size}\nPrice: {notif_price}\nToken: `{token_id[:16]}...`")
                 return resp
             else:
                 logger.warning(f"⚠️ Order placement returned unsuccessful: {resp}")
