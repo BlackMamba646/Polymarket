@@ -24,11 +24,11 @@ def _get_client() -> ClobClient:
                 config.CLOB_API_URL,
                 key=config.PRIVATE_KEY,
                 chain_id=config.POLY_CHAIN_ID,
-                signature_type=1,
+                signature_type=3,
                 funder=config.POLY_FUNDER,
             )
             # Derive and set API credentials
-            _client.set_api_creds(_client.create_or_derive_api_creds())
+            _client.set_api_creds(_client.create_or_derive_api_key())
             logger.info("CLOB Client initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize CLOB Client: {e}")
