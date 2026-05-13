@@ -65,6 +65,7 @@ class Config:
         self.STAKE_MIN = float(os.getenv("STAKE_MIN", "0"))
         self.STAKE_MAX = float(os.getenv("STAKE_MAX", "50"))
         self.STAKE_WHALE_PCT = float(os.getenv("STAKE_WHALE_PCT", "0.30"))
+        self.MIN_TRADER_TRADE = float(os.getenv("MIN_TRADER_TRADE", "25"))
     
     def _validate_config(self):
         """Validate that all required configuration is present"""

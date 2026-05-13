@@ -16,6 +16,7 @@ mock_config_obj.STAKE_WHALE_PCT = 0.30  # 30%
 mock_config_obj.STAKE_MIN = 0.0
 mock_config_obj.STAKE_MAX = 50.0
 mock_config_obj.BANKROLL = 1000.0
+mock_config_obj.MIN_TRADER_TRADE = 50.0
 mock_config_obj.DRY_RUN = True
 mock_config_obj.TRADER_WALLETS = ["0xtrader1"]
 mock_config_obj.POLY_FUNDER = "0xbotwallet"

@@ -63,7 +63,11 @@ async def handle_new_trade(payload):
         price = float(record.get('price', 0))
         condition_id = record.get('condition_id')
         
-        logger.info(f"🎯 Copying trade from target: {proxy_wallet[:10]}... | {title} | {side}")
+        logger.info(f"🎯 Trade from target: {proxy_wallet[:10]}... | {title} | {side} | ${usdc_size:.2f}")
+
+        if side != SELL and usdc_size < config.MIN_TRADER_TRADE:
+            logger.info(f"⏭️ Skipping small trade: ${usdc_size:.2f} < min ${config.MIN_TRADER_TRADE}")
+            return None
 
         if side == SELL:
             logger.info(f"⏭️  Side is SELL, calculating proportional size...")
@@ -134,7 +138,11 @@ async def handle_new_position(payload):
         avg_price = float(record.get('avg_price', 0))
         title = record.get('title', 'N/A')
 
-        logger.info(f"📈 New position from target: {proxy_wallet[:10]}... | {title}")
+        logger.info(f"📈 New position from target: {proxy_wallet[:10]}... | {title} | ${initial_value:.2f}")
+
+        if initial_value < config.MIN_TRADER_TRADE:
+            logger.info(f"⏭️ Skipping small position: ${initial_value:.2f} < min ${config.MIN_TRADER_TRADE}")
+            return None
 
         bot_usdc_value = sizing_constraints(initial_value)
         bot_size_units = bot_usdc_value / avg_price
@@ -165,6 +173,9 @@ async def handle_update_position(payload):
         logger.info(f"🔄 Update from target: {proxy_wallet[:10]}... | {title} | Delta: ${delta_value:+.2f}")
 
         if delta_value > 0:
+            if abs(delta_value) < config.MIN_TRADER_TRADE:
+                logger.info(f"⏭️ Skipping small update: ${abs(delta_value):.2f} < min ${config.MIN_TRADER_TRADE}")
+                return None
             sized_delta = sizing_constraints(abs(delta_value))
             bot_size_units = sized_delta / cur_price
             logger.info(f"✅ PLACING ORDER (update): {title} | BUY {bot_size_units:.2f} units @ ${cur_price} (${sized_delta:.2f})")
@@ -196,29 +207,58 @@ def _make_sync_callback(async_fn):
             logger.error(f"No running event loop for callback {async_fn.__name__}")
     return wrapper
 
+REALTIME_RECONNECT_INTERVAL = 300
+
 async def listen_to_positions():
-    logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (INSERT)")
-    supabase = await get_supabase()
-    await supabase.channel("positions-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_new_position)
-    ).subscribe()
-    while True: await asyncio.sleep(1)
+    while True:
+        try:
+            logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (INSERT)")
+            supabase = await get_supabase()
+            channel = supabase.channel("positions-inserts")
+            channel.on_postgres_changes(
+                "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_new_position)
+            )
+            await channel.subscribe()
+            await asyncio.sleep(REALTIME_RECONNECT_INTERVAL)
+            logger.info("🔄 Refreshing positions INSERT channel...")
+            await supabase.remove_channel(channel)
+        except Exception as e:
+            logger.error(f"❌ Positions listener error: {e}, reconnecting in 5s...")
+            await asyncio.sleep(5)
 
 async def listen_to_updates():
-    logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (UPDATE)")
-    supabase = await get_supabase()
-    await supabase.channel("positions-updates").on_postgres_changes(
-        "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_update_position)
-    ).subscribe()
-    while True: await asyncio.sleep(1)
+    while True:
+        try:
+            logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (UPDATE)")
+            supabase = await get_supabase()
+            channel = supabase.channel("positions-updates")
+            channel.on_postgres_changes(
+                "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_update_position)
+            )
+            await channel.subscribe()
+            await asyncio.sleep(REALTIME_RECONNECT_INTERVAL)
+            logger.info("🔄 Refreshing positions UPDATE channel...")
+            await supabase.remove_channel(channel)
+        except Exception as e:
+            logger.error(f"❌ Updates listener error: {e}, reconnecting in 5s...")
+            await asyncio.sleep(5)
 
 async def listen_to_trades():
-    logger.info(f"🔍 Monitoring {TABLE_NAME_TRADES} (INSERT)")
-    supabase = await get_supabase()
-    await supabase.channel("trades-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=_make_sync_callback(handle_new_trade)
-    ).subscribe()
-    while True: await asyncio.sleep(1)
+    while True:
+        try:
+            logger.info(f"🔍 Monitoring {TABLE_NAME_TRADES} (INSERT)")
+            supabase = await get_supabase()
+            channel = supabase.channel("trades-inserts")
+            channel.on_postgres_changes(
+                "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=_make_sync_callback(handle_new_trade)
+            )
+            await channel.subscribe()
+            await asyncio.sleep(REALTIME_RECONNECT_INTERVAL)
+            logger.info("🔄 Refreshing trades INSERT channel...")
+            await supabase.remove_channel(channel)
+        except Exception as e:
+            logger.error(f"❌ Trades listener error: {e}, reconnecting in 5s...")
+            await asyncio.sleep(5)
 
 async def run_all_listeners():
     logger.info("🚀 STARTING POLYMARKET MONITORING SYSTEM (Multi-Trader Mode)")

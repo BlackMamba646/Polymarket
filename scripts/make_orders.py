@@ -42,7 +42,11 @@ def make_order(price: float, size: float, side: str, token_id: str, max_slippage
     if max_slippage is None:
         max_slippage = config.DEFAULT_SLIPPAGE
 
+    POLYMARKET_MIN_SIZE = 5.0
     size = round(size, 2)
+    if size < POLYMARKET_MIN_SIZE:
+        logger.info(f"⏭️ Order size {size} below Polymarket minimum {POLYMARKET_MIN_SIZE}, skipping")
+        return None
     use_market_order = (side == SELL)
 
     if use_market_order:
