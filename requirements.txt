@@ -9,6 +9,7 @@ python-dotenv>=1.0.0
 
 # Polymarket CLOB client for trading
 py-clob-client>=0.20.0
+py-clob-client-v2>=1.0.0
 
 # HTTP requests
 requests>=2.31.0
