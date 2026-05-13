@@ -1,3 +1,9 @@
+import sys
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
 from datetime import datetime
 import threading
@@ -13,7 +19,7 @@ from get_player_history_new import (
 from constraints.sizing import sizing_constraints
 from constraints.risk_manager import check_risk_constraints
 from copied_trades import claim_trade, mark_trade, trader_exposure
-from py_clob_client.order_builder.constants import BUY, SELL
+from py_clob_client_v2.order_builder.constants import BUY, SELL
 from config import get_config
 from logger import logger
 
@@ -178,11 +184,21 @@ async def handle_update_position(payload):
         logger.error(f"❌ Error in handle_update_position: {e}")
         return None
 
+def _make_sync_callback(async_fn):
+    """Wrap an async handler so the Supabase Realtime library can call it synchronously."""
+    def wrapper(payload):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(async_fn(payload))
+        except RuntimeError:
+            logger.error(f"No running event loop for callback {async_fn.__name__}")
+    return wrapper
+
 async def listen_to_positions():
     logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (INSERT)")
     supabase = await get_supabase()
     await supabase.channel("positions-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=handle_new_position
+        "INSERT", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_new_position)
     ).subscribe()
     while True: await asyncio.sleep(1)
 
@@ -190,7 +206,7 @@ async def listen_to_updates():
     logger.info(f"🔍 Monitoring {TABLE_NAME_POSITIONS} (UPDATE)")
     supabase = await get_supabase()
     await supabase.channel("positions-updates").on_postgres_changes(
-        "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=handle_update_position
+        "UPDATE", schema="public", table=TABLE_NAME_POSITIONS, callback=_make_sync_callback(handle_update_position)
     ).subscribe()
     while True: await asyncio.sleep(1)
 
@@ -198,7 +214,7 @@ async def listen_to_trades():
     logger.info(f"🔍 Monitoring {TABLE_NAME_TRADES} (INSERT)")
     supabase = await get_supabase()
     await supabase.channel("trades-inserts").on_postgres_changes(
-        "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=handle_new_trade
+        "INSERT", schema="public", table=TABLE_NAME_TRADES, callback=_make_sync_callback(handle_new_trade)
     ).subscribe()
     while True: await asyncio.sleep(1)
 
