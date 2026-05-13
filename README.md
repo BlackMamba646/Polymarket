@@ -316,3 +316,4 @@ Contact: https://x.com/Giordanopsouza 🇧🇷
 *This polymarket copy trading bot helps traders automate their prediction market strategies. Star ⭐ the repo to support development!*
 
 
+"# Polymarket" 
