@@ -1,4 +1,5 @@
 # Code to get player positions and detect if any position exceeds the defined limit
+import time
 import requests
 from supabase import create_client, Client
 from config import get_config
@@ -123,15 +124,25 @@ def insert_player_positions_batch(positions: list):
     if not rows:
         return 0
 
-    try:
-        supabase.table(TABLE_NAME).upsert(
-            rows, on_conflict="proxy_wallet,asset"
-        ).execute()
-        logger.info(f"✅ Upserted {len(rows)} positions")
-        return len(rows)
-    except Exception as e:
-        logger.error(f"❌ Bulk upsert failed ({len(rows)} rows): {e}")
-        return 0
+    upserted = 0
+    for idx, row in enumerate(rows):
+        for attempt in range(3):
+            try:
+                supabase.table(TABLE_NAME).upsert(
+                    row, on_conflict="proxy_wallet,asset"
+                ).execute()
+                upserted += 1
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                else:
+                    logger.error(f"❌ Upsert failed (row {idx + 1}): {e}")
+        time.sleep(0.1)
+
+    if upserted:
+        logger.info(f"✅ Upserted {upserted} positions")
+    return upserted
 
 def print_positions_readable(positions: list):
     if not positions:

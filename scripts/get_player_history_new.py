@@ -1,3 +1,4 @@
+import time
 import requests
 from supabase import create_client, Client
 from datetime import datetime
@@ -86,23 +87,25 @@ def insert_activities_batch(activities: list):
         print("No activities to insert")
         return 0
 
-    success_count = 0
-    skip_count = 0
-    for activity in activities:
-        try:
-            supabase.table(TABLE_NAME).upsert(
-                activity, on_conflict="unique_activity_key"
-            ).execute()
-            success_count += 1
-        except Exception as e:
-            error_msg = str(e).lower()
-            if 'duplicate' in error_msg or 'unique' in error_msg or 'conflict' in error_msg:
-                skip_count += 1
-            else:
-                print(f"Error inserting activity: {e}")
-    if skip_count:
-        print(f"Skipped {skip_count} duplicate activities")
-    return success_count
+    upserted = 0
+    for idx, activity in enumerate(activities):
+        for attempt in range(3):
+            try:
+                supabase.table(TABLE_NAME).upsert(
+                    activity, on_conflict="unique_activity_key"
+                ).execute()
+                upserted += 1
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                else:
+                    print(f"Error upserting row {idx + 1}: {e}")
+        time.sleep(0.1)
+
+    if upserted:
+        print(f"✅ Upserted {upserted} activities")
+    return upserted
 
 if __name__ == "__main__":
     user_address = input("Enter the user address: ")
